@@ -1,0 +1,621 @@
+// SCHEMA PRISMA PARA OFICINA MECÂNICA & SERVIÇOS DE PNEUS
+// Sistema completo para painel de gerenciamento
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================
+// AUTENTICAÇÃO & USUÁRIOS
+// =============================================
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  // Relacionamentos com sistema da oficina
+  salesAsEmployee            Sale[]                @relation("SaleEmployee")
+  serviceOrdersAsResponsible ServiceOrder[]
+  serviceOrderServices       ServiceOrderService[] @relation("ServiceOrderServiceEmployee")
+  appointments               Appointment[]         @relation("AppointmentUser")
+  stockMovements             StockMovement[]
+  accountsPayable            AccountPayable[]      @relation("AccountPayableUser")
+
+  @@unique([email])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@map("verifications")
+}
+
+// =============================================
+// CADASTROS BÁSICOS
+// =============================================
+
+model Customer {
+  id         String    @id @default(cuid())
+  name       String
+  documentId String?   @unique // CPF/CNPJ
+  email      String?
+  phone      String?
+  whatsapp   String?
+  address    String?
+  city       String?
+  state      String?
+  zipCode    String?
+  birthDate  DateTime?
+  notes      String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // Relacionamentos
+  vehicles      Vehicle[]
+  serviceOrders ServiceOrder[]
+  sales         Sale[]
+  appointments  Appointment[]
+
+  @@index([documentId])
+  @@index([name])
+  @@index([phone])
+  @@map("customers")
+}
+
+model Vehicle {
+  id         String    @id @default(cuid())
+  customerId String
+  brand      String
+  model      String
+  year       Int?
+  color      String?
+  plate      String    @unique
+  chassisId  String?
+  fuelType   FuelType?
+  mileage    Int       @default(0)
+  notes      String?
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // Relacionamentos
+  customer      Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  serviceOrders ServiceOrder[]
+  appointments  Appointment[]
+
+  @@index([plate])
+  @@index([customerId])
+  @@index([brand, model])
+  @@map("vehicles")
+}
+
+enum FuelType {
+  GASOLINE
+  ETHANOL
+  FLEX
+  DIESEL
+  CNG
+  ELECTRIC
+  HYBRID
+}
+
+model Supplier {
+  id              String   @id @default(cuid())
+  tradeName       String
+  companyName     String?
+  documentId      String?  @unique // CNPJ
+  email           String?
+  phone           String?
+  address         String?
+  city            String?
+  state           String?
+  zipCode         String?
+  salesContact    String?
+  paymentTermDays Int      @default(30)
+  notes           String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relacionamentos
+  accountsPayable AccountPayable[]
+
+  @@index([documentId])
+  @@index([tradeName])
+  @@map("suppliers")
+}
+
+model Employee {
+  id                String    @id @default(cuid())
+  name              String
+  documentId        String?   @unique // CPF
+  email             String?
+  phone             String?
+  position          Position
+  salary            Decimal?  @db.Decimal(10, 2)
+  commissionPercent Decimal   @default(0) @db.Decimal(5, 2)
+  hireDate          DateTime?
+  terminationDate   DateTime?
+  address           String?
+  pixKey            String?
+  notes             String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relacionamentos
+  serviceOrdersAsResponsible ServiceOrder[] @relation("ResponsibleEmployee")
+
+  @@index([documentId])
+  @@index([position])
+  @@index([isActive])
+  @@map("employees")
+}
+
+enum Position {
+  MECHANIC
+  TIRE_TECHNICIAN
+  ATTENDANT
+  MANAGER
+  OWNER
+}
+
+// =============================================
+// PRODUTOS & GESTÃO DE ESTOQUE
+// =============================================
+
+model Category {
+  id          String       @id @default(cuid())
+  name        String
+  type        CategoryType @default(BOTH)
+  description String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+
+  // Relacionamentos
+  products Product[]
+  services Service[]
+
+  @@index([type])
+  @@map("categories")
+}
+
+enum CategoryType {
+  PRODUCT
+  SERVICE
+  BOTH
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  categoryId   String?
+  internalCode String?  @unique
+  barcode      String?
+  name         String
+  description  String?
+  brand        String?
+  unit         Unit     @default(PIECE)
+  costPrice    Decimal  @db.Decimal(10, 2)
+  salePrice    Decimal  @db.Decimal(10, 2)
+  profitMargin Decimal  @db.Decimal(5, 2)
+  currentStock Int      @default(0)
+  minimumStock Int      @default(0)
+  maximumStock Int      @default(0)
+  location     String?
+  ncmCode      String?
+  notes        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relacionamentos
+  category          Category?             @relation(fields: [categoryId], references: [id])
+  stockMovements    StockMovement[]
+  serviceOrderItems ServiceOrderProduct[]
+
+  @@index([internalCode])
+  @@index([barcode])
+  @@index([name])
+  @@index([categoryId])
+  @@index([minimumStock, currentStock])
+  @@map("products")
+}
+
+enum Unit {
+  PIECE
+  KILOGRAM
+  LITER
+  METER
+  SQUARE_METER
+  BOX
+  PAIR
+}
+
+model Service {
+  id                   String   @id @default(cuid())
+  categoryId           String?
+  name                 String
+  description          String?
+  price                Decimal  @db.Decimal(10, 2)
+  estimatedTimeMinutes Int?
+  mechanicCommission   Decimal  @default(0) @db.Decimal(5, 2)
+  notes                String?
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  // Relacionamentos
+  category             Category?             @relation(fields: [categoryId], references: [id])
+  serviceOrderServices ServiceOrderService[]
+
+  @@index([name])
+  @@index([categoryId])
+  @@map("services")
+}
+
+model StockMovement {
+  id             String       @id @default(cuid())
+  productId      String
+  movementType   MovementType
+  quantity       Int
+  unitPrice      Decimal?     @db.Decimal(10, 2)
+  totalValue     Decimal?     @db.Decimal(10, 2)
+  documentNumber String?
+  notes          String?
+  userId         String?
+  createdAt      DateTime     @default(now())
+
+  // Relacionamentos
+  product Product @relation(fields: [productId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([movementType, createdAt])
+  @@map("stock_movements")
+}
+
+enum MovementType {
+  IN
+  OUT
+  ADJUSTMENT
+  RETURN
+}
+
+// =============================================
+// ORDENS DE SERVIÇO
+// =============================================
+
+model ServiceOrder {
+  id                    String             @id @default(cuid())
+  orderNumber           String             @unique
+  customerId            String
+  vehicleId             String
+  responsibleEmployeeId String?
+  entryDate             DateTime           @default(now())
+  expectedDeliveryDate  DateTime?
+  deliveryDate          DateTime?
+  vehicleMileage        Int?
+  reportedProblem       String?
+  executedServices      String?
+  internalNotes         String?
+  customerNotes         String?
+  status                ServiceOrderStatus @default(OPEN)
+  priority              Priority           @default(NORMAL)
+  totalValue            Decimal            @default(0) @db.Decimal(10, 2)
+  discountValue         Decimal            @default(0) @db.Decimal(10, 2)
+  finalValue            Decimal            @default(0) @db.Decimal(10, 2)
+  warrantyDays          Int                @default(30)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  // Relacionamentos
+  customer            Customer              @relation(fields: [customerId], references: [id])
+  vehicle             Vehicle               @relation(fields: [vehicleId], references: [id])
+  responsibleEmployee Employee?             @relation("ResponsibleEmployee", fields: [responsibleEmployeeId], references: [id])
+  services            ServiceOrderService[]
+  products            ServiceOrderProduct[]
+  sales               Sale[]
+  User                User?                 @relation(fields: [userId], references: [id])
+  userId              String?
+
+  @@index([orderNumber])
+  @@index([status, entryDate])
+  @@index([customerId, vehicleId])
+  @@index([responsibleEmployeeId, entryDate])
+  @@map("service_orders")
+}
+
+enum ServiceOrderStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_PARTS
+  WAITING_CUSTOMER
+  COMPLETED
+  DELIVERED
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model ServiceOrderService {
+  id                    String        @id @default(cuid())
+  serviceOrderId        String
+  serviceId             String
+  employeeId            String?
+  quantity              Decimal       @default(1) @db.Decimal(10, 2)
+  unitPrice             Decimal       @db.Decimal(10, 2)
+  totalPrice            Decimal       @db.Decimal(10, 2)
+  additionalDescription String?
+  executionDate         DateTime?
+  executionTimeMinutes  Int?
+  status                ServiceStatus @default(PENDING)
+  createdAt             DateTime      @default(now())
+
+  // Relacionamentos
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  service      Service      @relation(fields: [serviceId], references: [id])
+  employee     User?        @relation("ServiceOrderServiceEmployee", fields: [employeeId], references: [id])
+
+  @@index([serviceOrderId])
+  @@index([employeeId, executionDate])
+  @@map("service_order_services")
+}
+
+enum ServiceStatus {
+  PENDING
+  IN_EXECUTION
+  COMPLETED
+  CANCELLED
+}
+
+model ServiceOrderProduct {
+  id                    String    @id @default(cuid())
+  serviceOrderId        String
+  productId             String
+  quantity              Int
+  unitPrice             Decimal   @db.Decimal(10, 2)
+  totalPrice            Decimal   @db.Decimal(10, 2)
+  additionalDescription String?
+  isApplied             Boolean   @default(false)
+  applicationDate       DateTime?
+  createdAt             DateTime  @default(now())
+
+  // Relacionamentos
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+
+  @@index([serviceOrderId])
+  @@index([productId])
+  @@map("service_order_products")
+}
+
+// =============================================
+// FINANCEIRO
+// =============================================
+
+model PaymentMethod {
+  id          String      @id @default(cuid())
+  name        String
+  type        PaymentType
+  feePercent  Decimal     @default(0) @db.Decimal(5, 2)
+  receiveDays Int         @default(0) // Days to receive payment
+  isActive    Boolean     @default(true)
+
+  // Relacionamentos
+  receivables Receivable[]
+
+  @@index([type])
+  @@map("payment_methods")
+}
+
+enum PaymentType {
+  CASH
+  DEBIT_CARD
+  CREDIT_CARD
+  PIX
+  BANK_TRANSFER
+  CHECK
+  INSTALLMENT_PLAN
+}
+
+model Sale {
+  id             String     @id @default(cuid())
+  saleNumber     String?    @unique
+  serviceOrderId String?
+  customerId     String
+  employeeId     String?
+  saleDate       DateTime   @default(now())
+  grossValue     Decimal    @db.Decimal(10, 2)
+  discountValue  Decimal    @default(0) @db.Decimal(10, 2)
+  netValue       Decimal    @db.Decimal(10, 2)
+  status         SaleStatus @default(OPEN)
+  notes          String?
+  createdAt      DateTime   @default(now())
+
+  // Relacionamentos
+  serviceOrder ServiceOrder? @relation(fields: [serviceOrderId], references: [id])
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  employee     User?         @relation("SaleEmployee", fields: [employeeId], references: [id])
+  receivables  Receivable[]
+
+  @@index([saleDate])
+  @@index([status])
+  @@index([customerId, saleDate])
+  @@map("sales")
+}
+
+enum SaleStatus {
+  OPEN
+  PAID
+  PARTIALLY_PAID
+  CANCELLED
+}
+
+model Receivable {
+  id                String           @id @default(cuid())
+  saleId            String
+  paymentMethodId   String
+  installmentNumber Int              @default(1)
+  value             Decimal          @db.Decimal(10, 2)
+  dueDate           DateTime
+  paymentDate       DateTime?
+  status            ReceivableStatus @default(PENDING)
+  notes             String?
+  createdAt         DateTime         @default(now())
+
+  // Relacionamentos
+  sale          Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  paymentMethod PaymentMethod @relation(fields: [paymentMethodId], references: [id])
+
+  @@index([dueDate, status])
+  @@index([saleId])
+  @@map("receivables")
+}
+
+enum ReceivableStatus {
+  PENDING
+  RECEIVED
+  OVERDUE
+  CANCELLED
+}
+
+model AccountPayable {
+  id             String          @id @default(cuid())
+  supplierId     String?
+  employeeId     String?
+  description    String
+  category       PayableCategory
+  value          Decimal         @db.Decimal(10, 2)
+  dueDate        DateTime
+  paymentDate    DateTime?
+  paymentMethod  String?
+  documentNumber String?
+  status         PayableStatus   @default(PENDING)
+  notes          String?
+  createdAt      DateTime        @default(now())
+
+  // Relacionamentos
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+  user     User?     @relation("AccountPayableUser", fields: [employeeId], references: [id])
+
+  @@index([dueDate, status])
+  @@index([category])
+  @@index([supplierId])
+  @@map("accounts_payable")
+}
+
+enum PayableCategory {
+  SUPPLIER
+  SALARY
+  COMMISSION
+  RENT
+  ELECTRICITY
+  WATER
+  PHONE
+  INTERNET
+  TAXES
+  OTHERS
+}
+
+enum PayableStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// =============================================
+// AGENDAMENTOS
+// =============================================
+
+model Appointment {
+  id               String            @id @default(cuid())
+  customerId       String
+  vehicleId        String?
+  employeeId       String?
+  appointmentDate  DateTime
+  expectedEndDate  DateTime?
+  requestedService String?
+  notes            String?
+  status           AppointmentStatus @default(SCHEDULED)
+  reminderSent     Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Relacionamentos
+  customer Customer @relation(fields: [customerId], references: [id])
+  vehicle  Vehicle? @relation(fields: [vehicleId], references: [id])
+  user     User?    @relation("AppointmentUser", fields: [employeeId], references: [id])
+
+  @@index([appointmentDate, status])
+  @@index([employeeId, appointmentDate])
+  @@map("appointments")
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_SERVICE
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
